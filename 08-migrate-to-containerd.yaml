@@ -1,0 +1,394 @@
+- hosts: kubernetes
+  vars_files:
+    - vars.yml
+ 
+  gather_facts: True
+  become: true
+  tasks:
+
+    - name: "Copy cluster admin.conf"
+      copy:
+        src: artifacts/cluster/admin.conf
+        remote_src: False
+        dest: /etc/kubernetes/admin.conf
+        owner: root
+        group: root
+        mode: 600
+      when: "inventory_hostname != groups['master']"
+
+
+    - name: "Copy containerd"
+      copy:
+        src: artifacts/cri-containerd-cni.tar.gz
+        remote_src: False
+        dest: /tmp/cri-containerd-cni.tar.gz
+        owner: root
+        group: root
+        mode: 600
+
+
+- hosts: master[0:1]
+  vars_files:
+    - vars.yml
+ 
+  gather_facts: True
+  become: true
+  tasks:
+
+    - name: Disable master node
+      shell: |
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf cordon "{{ inventory_hostname }}" 
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf drain "{{ inventory_hostname }}" --ignore-daemonsets
+              
+    - name: Delete Docker
+      shell: |
+              apt-get -y purge docker-engine docker docker.io docker-ce docker-ce-cli containerd.io
+              apt-get autoremove -y --purge docker-engine docker docker.io docker-ce
+              rm -rf /var/lib/docker
+              rm -rf /var/lib/containerd
+              rm -rf /var/lib/docker /etc/docker
+              rm /etc/apparmor.d/docker
+              groupdel docker
+              rm -rf /var/run/docker.sock
+
+    - name: Create containerd config file
+      file:
+        path: "/etc/modules-load.d/containerd.conf"
+        state: "touch"
+
+    - name: Add conf for containerd
+      blockinfile:
+        path: "/etc/modules-load.d/containerd.conf"
+        block: |
+              overlay
+              br_netfilter
+
+    - name: modprobe
+      shell: |
+              sudo modprobe overlay
+              sudo modprobe br_netfilter
+
+    - name: Set system configurations for Kubernetes networking
+      file:
+        path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+        state: "touch"                        
+
+    - name: Add conf for containerd
+      blockinfile:
+        path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+        block: |
+               net.bridge.bridge-nf-call-iptables = 1
+               net.ipv4.ip_forward = 1
+               net.bridge.bridge-nf-call-ip6tables = 1
+               net.ipv4.conf.default.rp_filter = 1
+               net.ipv4.conf.all.rp_filter = 1
+
+    - name: Apply new settings
+      command: sudo sysctl --system
+
+    - name: Install containerd
+      shell: |
+              tar --no-overwrite-dir -C / -xzf /tmp/cri-containerd-cni.tar.gz
+              sudo mkdir -p /etc/containerd
+              sudo containerd config default | sudo tee /etc/containerd/config.toml
+              sudo systemctl enable containerd
+              sudo systemctl start containerd
+              
+
+    - name: Fix config.toml
+      lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '            SystemdCgroup = false'
+        line:   '            SystemdCgroup = true'
+
+    - name: Restart containerd
+      command: sudo systemctl restart containerd   
+    
+    - name: Fix config.toml
+      lineinfile:
+        path: /var/lib/kubelet/kubeadm-flags.env
+        regexp: 'KUBELET_KUBEADM_ARGS="'
+        line: ' KUBELET_KUBEADM_ARGS="--network-plugin=cni --pod-infra-container-image=k8s.gcr.io/pause:3.5 --resolv-conf=/run/systemd/resolve/resolv.conf --container-runtime=remote --container-runtime-endpoint=unix:///run/containerd/containerd.sock"'
+        backrefs: yes
+
+    - name: Start Kunelet
+      shell: systemctl restart kubelet
+
+    - name: Enable master node
+      shell: |
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf uncordon {{ inventory_hostname }}
+
+- hosts: master[2:3]
+  vars_files:
+    - vars.yml
+ 
+  gather_facts: True
+  become: true
+  tasks:
+
+    - name: Disable master node
+      shell: |
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf cordon "{{ inventory_hostname }}" 
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf drain "{{ inventory_hostname }}" --ignore-daemonsets
+              
+    - name: Delete Docker
+      shell: |
+              apt-get -y purge docker-engine docker docker.io docker-ce docker-ce-cli containerd.io
+              apt-get autoremove -y --purge docker-engine docker docker.io docker-ce
+              rm -rf /var/lib/docker
+              rm -rf /var/lib/containerd
+              rm -rf /var/lib/docker /etc/docker
+              rm /etc/apparmor.d/docker
+              groupdel docker
+              rm -rf /var/run/docker.sock
+
+    - name: Create containerd config file
+      file:
+        path: "/etc/modules-load.d/containerd.conf"
+        state: "touch"
+
+    - name: Add conf for containerd
+      blockinfile:
+        path: "/etc/modules-load.d/containerd.conf"
+        block: |
+              overlay
+              br_netfilter
+
+    - name: modprobe
+      shell: |
+              sudo modprobe overlay
+              sudo modprobe br_netfilter
+
+    - name: Set system configurations for Kubernetes networking
+      file:
+        path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+        state: "touch"                        
+
+    - name: Add conf for containerd
+      blockinfile:
+        path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+        block: |
+               net.bridge.bridge-nf-call-iptables = 1
+               net.ipv4.ip_forward = 1
+               net.bridge.bridge-nf-call-ip6tables = 1
+               net.ipv4.conf.default.rp_filter = 1
+               net.ipv4.conf.all.rp_filter = 1
+
+    - name: Apply new settings
+      command: sudo sysctl --system
+
+    - name: Install containerd
+      shell: |
+              tar --no-overwrite-dir -C / -xzf /tmp/cri-containerd-cni.tar.gz
+              sudo mkdir -p /etc/containerd
+              sudo containerd config default | sudo tee /etc/containerd/config.toml
+              sudo systemctl enable containerd
+              sudo systemctl start containerd
+              
+
+    - name: Fix config.toml
+      lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '            SystemdCgroup = false'
+        line:   '            SystemdCgroup = true'
+
+    - name: Restart containerd
+      command: sudo systemctl restart containerd   
+    
+    - name: Fix config.toml
+      lineinfile:
+        path: /var/lib/kubelet/kubeadm-flags.env
+        regexp: 'KUBELET_KUBEADM_ARGS="'
+        line: ' KUBELET_KUBEADM_ARGS="--network-plugin=cni --pod-infra-container-image=k8s.gcr.io/pause:3.5 --resolv-conf=/run/systemd/resolve/resolv.conf --container-runtime=remote --container-runtime-endpoint=unix:///run/containerd/containerd.sock"'
+        backrefs: yes
+
+    - name: Start Kunelet
+      shell: systemctl restart kubelet
+
+    - name: Enable master node
+      shell: |
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf uncordon {{ inventory_hostname }}
+
+- hosts: master[4]
+  vars_files:
+    - vars.yml
+ 
+  gather_facts: True
+  become: true
+  tasks:
+
+    - name: Disable master node
+      shell: |
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf cordon "{{ inventory_hostname }}" 
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf drain "{{ inventory_hostname }}" --ignore-daemonsets
+              
+    - name: Delete Docker
+      shell: |
+              apt-get -y purge docker-engine docker docker.io docker-ce docker-ce-cli containerd.io
+              apt-get autoremove -y --purge docker-engine docker docker.io docker-ce
+              rm -rf /var/lib/docker
+              rm -rf /var/lib/containerd
+              rm -rf /var/lib/docker /etc/docker
+              rm /etc/apparmor.d/docker
+              groupdel docker
+              rm -rf /var/run/docker.sock
+
+    - name: Create containerd config file
+      file:
+        path: "/etc/modules-load.d/containerd.conf"
+        state: "touch"
+
+    - name: Add conf for containerd
+      blockinfile:
+        path: "/etc/modules-load.d/containerd.conf"
+        block: |
+              overlay
+              br_netfilter
+
+    - name: modprobe
+      shell: |
+              sudo modprobe overlay
+              sudo modprobe br_netfilter
+
+    - name: Set system configurations for Kubernetes networking
+      file:
+        path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+        state: "touch"                        
+
+    - name: Add conf for containerd
+      blockinfile:
+        path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+        block: |
+               net.bridge.bridge-nf-call-iptables = 1
+               net.ipv4.ip_forward = 1
+               net.bridge.bridge-nf-call-ip6tables = 1
+               net.ipv4.conf.default.rp_filter = 1
+               net.ipv4.conf.all.rp_filter = 1
+
+    - name: Apply new settings
+      command: sudo sysctl --system
+
+    - name: Install containerd
+      shell: |
+              tar --no-overwrite-dir -C / -xzf /tmp/cri-containerd-cni.tar.gz
+              sudo mkdir -p /etc/containerd
+              sudo containerd config default | sudo tee /etc/containerd/config.toml
+              sudo systemctl enable containerd
+              sudo systemctl start containerd
+              
+
+    - name: Fix config.toml
+      lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '            SystemdCgroup = false'
+        line:   '            SystemdCgroup = true'
+
+    - name: Restart containerd
+      command: sudo systemctl restart containerd   
+    
+    - name: Fix config.toml
+      lineinfile:
+        path: /var/lib/kubelet/kubeadm-flags.env
+        regexp: 'KUBELET_KUBEADM_ARGS="'
+        line: ' KUBELET_KUBEADM_ARGS="--network-plugin=cni --pod-infra-container-image=k8s.gcr.io/pause:3.5 --resolv-conf=/run/systemd/resolve/resolv.conf --container-runtime=remote --container-runtime-endpoint=unix:///run/containerd/containerd.sock"'
+        backrefs: yes
+
+    - name: Start Kunelet
+      shell: systemctl restart kubelet
+
+    - name: Enable master node
+      shell: |
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf uncordon {{ inventory_hostname }}
+
+#############################################################################################################################################
+
+- hosts: worker
+  vars_files:
+    - vars.yml
+ 
+  gather_facts: True
+  become: true
+  tasks:
+
+    - name: Disable master node
+      shell: |
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf cordon "{{ inventory_hostname }}" 
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf drain "{{ inventory_hostname }}" --ignore-daemonsets
+              
+    - name: Delete Docker
+      shell: |
+              apt-get -y purge docker-engine docker docker.io docker-ce docker-ce-cli containerd.io
+              apt-get autoremove -y --purge docker-engine docker docker.io docker-ce
+              rm -rf /var/lib/docker
+              rm -rf /var/lib/containerd
+              rm -rf /var/lib/docker /etc/docker
+              rm /etc/apparmor.d/docker
+              groupdel docker
+              rm -rf /var/run/docker.sock
+
+    - name: Create containerd config file
+      file:
+        path: "/etc/modules-load.d/containerd.conf"
+        state: "touch"
+
+    - name: Add conf for containerd
+      blockinfile:
+        path: "/etc/modules-load.d/containerd.conf"
+        block: |
+              overlay
+              br_netfilter
+
+    - name: modprobe
+      shell: |
+              sudo modprobe overlay
+              sudo modprobe br_netfilter
+
+    - name: Set system configurations for Kubernetes networking
+      file:
+        path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+        state: "touch"                        
+
+    - name: Add conf for containerd
+      blockinfile:
+        path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+        block: |
+               net.bridge.bridge-nf-call-iptables = 1
+               net.ipv4.ip_forward = 1
+               net.bridge.bridge-nf-call-ip6tables = 1
+               net.ipv4.conf.default.rp_filter = 1
+               net.ipv4.conf.all.rp_filter = 1
+
+    - name: Apply new settings
+      command: sudo sysctl --system
+
+    - name: Install containerd
+      shell: |
+              tar --no-overwrite-dir -C / -xzf /tmp/cri-containerd-cni.tar.gz
+              sudo mkdir -p /etc/containerd
+              sudo containerd config default | sudo tee /etc/containerd/config.toml
+              sudo systemctl enable containerd
+              sudo systemctl start containerd
+              
+
+    - name: Fix config.toml
+      lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '            SystemdCgroup = false'
+        line:   '            SystemdCgroup = true'
+
+    - name: Restart containerd
+      command: sudo systemctl restart containerd   
+    
+    - name: Fix config.toml
+      lineinfile:
+        path: /var/lib/kubelet/kubeadm-flags.env
+        regexp: 'KUBELET_KUBEADM_ARGS="'
+        line: ' KUBELET_KUBEADM_ARGS="--network-plugin=cni --pod-infra-container-image=k8s.gcr.io/pause:3.5 --resolv-conf=/run/systemd/resolve/resolv.conf --container-runtime=remote --container-runtime-endpoint=unix:///run/containerd/containerd.sock"'
+        backrefs: yes
+
+    - name: Start Kunelet
+      shell: systemctl restart kubelet
+
+    - name: Enable master node
+      shell: |
+              kubectl --kubeconfig=/etc/kubernetes/admin.conf uncordon {{ inventory_hostname }}

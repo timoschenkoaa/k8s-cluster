@@ -1,0 +1,91 @@
+#!/usr/bin/env ansible-playbook
+---
+- name: Manages virtual machines in vCenter
+  hosts: localhost
+  gather_facts: False
+  vars_files:
+    - secrets.yml
+    - vars.yaml
+  tasks:
+  
+    - name:  Clone a virtual machine from Linux template and customize
+      community.vmware.vmware_guest:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        datacenter: "{{ datacenter }}"
+        validate_certs: no
+        state: present
+        folder: "{{ folder }}"
+        template: "{{ template }}"
+        name: "{{ item.name }}"        
+        resource_pool: "{{ resource_pool_name  }}"
+        networks:
+          - name: "{{ vm_network }}"
+            device_type: vmxnet3
+            connected: true
+            start_connected: true
+            ip: "{{ item.ip }}"
+            netmask: "{{ guest_netmask }}"
+            gateway: "{{ guest_gateway }}"
+            dns_servers:
+              - '{{ guest_dns_server1 }}'
+              - '{{ guest_dns_server2 }}'
+        hardware:
+          memory_mb: "{{ item.memory }}"
+          num_cpus:  "{{ item.cpu }}"      
+        wait_for_ip_address: True
+        customization:
+          domain: "{{ guest_domain }}"
+          dns_servers:
+            - '{{ guest_dns_server1 }}'
+            - '{{ guest_dns_server2 }}'
+          dns_suffix:
+            - okbtsp.com
+            - okbtsp.local
+          hostname: "{{ item.name }}"   
+      delegate_to: localhost
+      loop: "{{ servers }}"
+      async: 60
+      poll: 0
+
+    - name: Wait for system was deployed
+      wait_for:
+        timeout: 180
+      delegate_to: localhost
+
+    - name: Change network for Network adapter
+      vmware_guest_network:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        datacenter: "{{ datacenter }}"
+        validate_certs: no
+        gather_network_info: false
+        name: "{{ item.name }}"
+        networks:
+          - state: present
+            device_type: vmxnet3
+            connected: true
+            start_connected: true
+      delegate_to: localhost  
+      loop: "{{ servers }}"
+
+    - name: Set the state of a virtual machine to restarted
+      community.vmware.vmware_guest_powerstate:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        folder: "{{ folder }}"
+        validate_certs: no
+        name: "{{ item.name }}"
+        state: powered-on
+      loop: "{{ servers }}"
+      delegate_to: localhost 
+  
+    - name: Wait for system was started
+      wait_for:
+        timeout: 120
+      delegate_to: localhost
+
+

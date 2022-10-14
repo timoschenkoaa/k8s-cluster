@@ -1,0 +1,31 @@
+[etcd]
+k8s-etcd-01  ansible_host='10.10.150.20' ansible_user=root
+k8s-etcd-02  ansible_host='10.10.150.21' ansible_user=root
+k8s-etcd-03  ansible_host='10.10.150.22' ansible_user=root
+k8s-etcd-04  ansible_host='10.10.150.23' ansible_user=root
+k8s-etcd-05  ansible_host='10.10.150.24' ansible_user=root
+
+[master]
+k8s-master-01  ansible_host='10.10.150.25' ansible_user=root
+k8s-master-02  ansible_host='10.10.150.26' ansible_user=root
+k8s-master-03  ansible_host='10.10.150.27' ansible_user=root
+k8s-master-04  ansible_host='10.10.150.28' ansible_user=root
+k8s-master-05  ansible_host='10.10.150.29' ansible_user=root
+
+[worker]
+k8s-worker-01  ansible_host='10.10.150.30' ansible_user=root
+k8s-worker-02  ansible_host='10.10.150.31' ansible_user=root
+k8s-worker-03  ansible_host='10.10.150.32' ansible_user=root
+k8s-worker-04  ansible_host='10.10.150.33' ansible_user=root
+k8s-worker-05  ansible_host='10.10.150.34' ansible_user=root
+k8s-worker-06  ansible_host='10.10.150.35' ansible_user=root
+k8s-worker-07  ansible_host='10.10.150.36' ansible_user=root
+
+[kubernetes:children]
+master
+worker
+
+[k8s:children]
+etcd
+master
+worker

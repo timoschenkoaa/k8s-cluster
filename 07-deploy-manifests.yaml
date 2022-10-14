@@ -1,0 +1,44 @@
+- hosts: all
+  gather_facts: False
+  become: true
+  tasks:
+    - name: uodate cashe nds
+      shell: sudo  systemd-resolve --flush-caches
+    # - name: Deploy CNI Canico
+    #   shell: kubectl --kubeconfig=./artifacts/cluster/admin.conf apply -f  https://docs.projectcalico.org/manifests/calico.yaml
+
+    # - name: Install Helm
+    #   shell: |
+    #           curl https://baltocdn.com/helm/signing.asc | sudo apt-key add -
+    #           sudo apt-get install apt-transport-https --yes
+    #           echo "deb https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+    #           sudo apt-get update
+    #           sudo apt-get install helm
+
+    # - name: Enable IPVS mode
+    #   shell: |
+    #           kubectl get configmap kube-proxy -n kube-system -o yaml | \
+    #           sed -e "s/strictARP: false/strictARP: true/" | \
+    #           kubectl diff -f - -n kube-system
+    #           kubectl get configmap kube-proxy -n kube-system -o yaml | \
+    #           sed -e "s/strictARP: false/strictARP: true/" | \
+    #           kubectl apply -f - -n kube-system
+
+    # - name: Create namespaces
+    #   shell: kubectl --kubeconfig=./artifacts/cluster/admin.conf apply -f ./manifests/namespaces.yaml
+
+    # - name: Deploy Loadbalancer MetalLB
+    #   shell: |
+    #           helm repo add metallb https://metallb.github.io/metallb
+    #           helm install metallb metallb/metallb -f ./manifests/metallb/metallb-values.yaml --namespace metallb
+
+    # - name: Deploy Traefik Ingress
+    #   shell: |
+    #           kubectl create secret tls traefik-tls-cert --key manifests/traefik/Certificate.key --cert manifests/traefik/Certificate.crt -n traefik
+    #           helm repo add traefik https://helm.traefik.io/traefik
+    #           helm install traefik traefik/traefik -f ./manifests/traefik/traefik-values.yaml --namespace traefik
+    #           kubectl apply -f ./manifests/traefik/traefik-auth.yaml -n traefik
+    #           kubectl apply -f ./manifests/traefik/traefik-ingresses.yaml -n traefik
+
+    # - name: Deploy Dashboard
+    #   shell: kubectl --kubeconfig=./artifacts/cluster/admin.conf apply -f ./manifests/dashboard

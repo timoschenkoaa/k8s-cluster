@@ -1,0 +1,4 @@
+artifacts/
+configs/
+.ansible/
+admin.conf

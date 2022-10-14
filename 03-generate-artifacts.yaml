@@ -1,0 +1,215 @@
+- hosts: localhost
+  vars_files:
+    - vars.yaml
+ 
+  gather_facts: False
+  become: true
+  tasks:
+
+    - name: allow local admin to have passwordless sudo
+      lineinfile:
+        dest: /etc/sudoers
+        line: '{{ local_admin }} ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+        
+    - name: Install K8s Source
+      shell: |
+              sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+              echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+              sudo apt-get update
+              sudo apt-get install -y kubelet kubeadm kubectl
+              sudo apt-mark hold kubelet kubeadm kubectl
+
+- hosts: localhost
+  vars_files:
+    - vars.yaml
+ 
+  gather_facts: False
+  become: False
+  tasks:
+  
+    - name: "Create directory for configuration"
+      file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - ./artifacts
+        - ./artifacts/cluster
+        - ./artifacts/{{hostvars[groups['etcd'][0]].inventory_hostname}}
+        - ./artifacts/{{hostvars[groups['etcd'][1]].inventory_hostname}}
+        - ./artifacts/{{hostvars[groups['etcd'][2]].inventory_hostname}}
+        - ./artifacts/{{hostvars[groups['etcd'][3]].inventory_hostname}}
+        - ./artifacts/{{hostvars[groups['etcd'][4]].inventory_hostname}}
+        - ./configs
+
+    - name: Download containerd
+      get_url:
+        url: https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/cri-containerd-cni-{{ containerd_version }}-linux-amd64.tar.gz
+        dest: ./artifacts/cri-containerd-cni.tar.gz       
+
+    - name: "Create empty haproxy.cfg"
+      file:
+        path: "./configs/haproxy.cfg"
+        state: touch  
+
+    - name: "Creating haproxy config"
+      copy:
+        dest: "./configs/haproxy.cfg"
+        content: |
+          global
+              user haproxy
+              group haproxy
+          defaults
+              mode http
+              log global
+              retries 2
+              timeout connect 3000ms
+              timeout server 5000ms
+              timeout client 5000ms
+          frontend kubernetes
+              bind {{vip_for_haproxy}}:6443
+              option tcplog
+              mode tcp
+              default_backend kubernetes-master-nodes
+          backend kubernetes-master-nodes
+              mode tcp
+              balance roundrobin
+              option tcp-check
+              server {{ hostvars[groups['master'][0]].inventory_hostname}} {{ hostvars[groups['master'][0]].ansible_host }}:6443 check fall 3 rise 2
+              server {{ hostvars[groups['master'][1]].inventory_hostname}} {{ hostvars[groups['master'][1]].ansible_host }}:6443 check fall 3 rise 2
+              server {{ hostvars[groups['master'][2]].inventory_hostname}} {{ hostvars[groups['master'][2]].ansible_host }}:6443 check fall 3 rise 2
+              server {{ hostvars[groups['master'][3]].inventory_hostname}} {{ hostvars[groups['master'][3]].ansible_host }}:6443 check fall 3 rise 2 
+              server {{ hostvars[groups['master'][4]].inventory_hostname}} {{ hostvars[groups['master'][4]].ansible_host }}:6443 check fall 3 rise 2
+
+    - name: "Create empty Heartbeat authkeys"
+      file:
+        path: "./configs/authkeys"
+        state: touch
+
+    - name: "Creating Heartbeat authkeys "
+      copy:
+        dest: "./configs/authkeys"
+        content: |
+          auth 1
+          1 md5 bb77d0d3b3f239fa5db73bdf27b8d29a
+
+    - name: "Create empty Heartbeat ha.cf"
+      file:
+        path: "./configs/{{item}}_ha.cf"
+        state: touch
+      with_items: "{{groups['etcd']}}"
+
+    - name: "Creating Heartbeat authkeys "
+      copy:
+        dest: "./configs/{{item}}_ha.cf"
+        content: |
+          #       keepalive: how many seconds between heartbeats
+          #
+          keepalive 2 
+          #
+          #       deadtime: seconds-to-declare-host-dead
+          #
+          deadtime 10
+          #
+          #       What UDP port to use for udp or ppp-udp communication?
+          #
+          udpport 694
+          #	What interfaces to broadcast heartbeats over?
+          bcast  ens160
+          mcast ens160 225.0.0.1 694 1 0
+          ucast ens160 {{ hostvars[groups['etcd'][0]].ansible_host }}
+          ucast ens160 {{ hostvars[groups['etcd'][1]].ansible_host }}
+          ucast ens160 {{ hostvars[groups['etcd'][2]].ansible_host }}
+          ucast ens160 {{ hostvars[groups['etcd'][3]].ansible_host }}
+          ucast ens160 {{ hostvars[groups['etcd'][4]].ansible_host }}
+          #       What interfaces to heartbeat over?
+          udp     ens160  
+          #       What interfaces to heartbeat over?
+          udp     ens160
+          #
+          #       Facility to use for syslog()/logger (alternative to log/debugfile)
+          #
+          logfacility local0
+          #
+          #       Tell what machines are in the cluster
+          #       node    nodename ...    -- must match uname -n
+          node	{{ groups['etcd'][0] }}
+          node	{{ groups['etcd'][1] }}
+          node	{{ groups['etcd'][2] }}
+          node	{{ groups['etcd'][3] }}
+          node	{{ groups['etcd'][4] }}
+      with_items: "{{ groups['etcd'] }}"
+
+    - name: Fix ha.cf
+      lineinfile:
+        path: ./configs/{{item}}_ha.cf
+        regexp: '{{ hostvars[item].ansible_host }}'
+        line: '#'
+      with_items: "{{ groups['etcd'] }}"
+
+    - name: "Create empty Heartbeat haresources"
+      file:
+        path: "./configs/haresources"
+        state: touch
+
+    - name: "Creating Heartbeat haresources "
+      copy:
+        dest: "./configs/haresources"
+        content: |
+          {{ groups['etcd'][0] }} IPaddr::{{vip_for_haproxy}}/25/ens160
+
+    - name: "Create empty kubeadmcfg.yaml"
+      file:
+        path: "./configs/{{item}}_kubeadmcfg.yaml"
+        state: touch
+      with_items: "{{groups['etcd']}}"
+
+    - name: "Creating kubeadmcfg.yaml for ETCD "
+      copy:
+        dest: "./configs/{{item}}_kubeadmcfg.yaml"
+        content: |
+          apiVersion: "kubeadm.k8s.io/v1beta3"
+          kind: ClusterConfiguration
+          etcd:
+              local:
+                  serverCertSANs:
+                  - "{{ hostvars[item].ansible_host }}"
+                  peerCertSANs:
+                  - "{{ hostvars[item].ansible_host }}"
+                  extraArgs:
+                      initial-cluster: {{ groups['etcd'][0] }}=https://{{ hostvars[groups['etcd'][0]].ansible_host }}:2380,{{ groups['etcd'][1] }}=https://{{ hostvars[groups['etcd'][1]].ansible_host }}:2380,{{ groups['etcd'][2] }}=https://{{ hostvars[groups['etcd'][2]].ansible_host }}:2380,{{ groups['etcd'][3] }}=https://{{ hostvars[groups['etcd'][3]].ansible_host }}:2380,{{ groups['etcd'][4] }}=https://{{ hostvars[groups['etcd'][4]].ansible_host }}:2380
+                      initial-cluster-state: new
+                      name: {{item}}
+                      listen-peer-urls: https://{{ hostvars[item].ansible_host }}:2380
+                      listen-client-urls: https://{{ hostvars[item].ansible_host }}:2379
+                      advertise-client-urls: https://{{ hostvars[item].ansible_host }}:2379
+                      initial-advertise-peer-urls: https://{{ hostvars[item].ansible_host }}:2380
+      with_items: "{{ groups['etcd'] }}"
+      
+    - name: Create cert center
+      shell: sudo kubeadm init phase certs etcd-ca
+
+    - name: Create certificates for ETCD node
+      shell: |
+            sudo kubeadm init phase certs etcd-server --config=./configs/{{ item }}_kubeadmcfg.yaml
+            sudo kubeadm init phase certs etcd-peer --config=./configs/{{ item }}_kubeadmcfg.yaml
+            sudo kubeadm init phase certs etcd-healthcheck-client --config=./configs/{{ item }}_kubeadmcfg.yaml
+            sudo kubeadm init phase certs apiserver-etcd-client --config=./configs/{{ item }}_kubeadmcfg.yaml
+            sudo cp -R /etc/kubernetes/pki ./artifacts/{{ item }}
+            sudo find /etc/kubernetes/pki -not -name ca.crt -not -name ca.key -type f -delete
+            sudo chown -R {{ local_admin }}:{{ local_admin }} ./artifacts/{{ item }}
+      with_items: "{{ groups['etcd'] }}"
+
+    - name: Create 20-etcd-service-manager.conf
+      file:
+        path: "./configs/20-etcd-service-manager.conf"
+        state: "touch"
+
+    - name: "Edit 20-etcd-service-manager.conf"
+      copy:
+        dest: "./configs/20-etcd-service-manager.conf"
+        content: | 
+          [Service]
+          ExecStart=
+          ExecStart=/usr/bin/kubelet --address=127.0.0.1 --pod-manifest-path=/etc/kubernetes/manifests --cgroup-driver=systemd
+          Restart=always    

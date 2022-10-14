@@ -1,0 +1,153 @@
+- hosts: master
+  vars_files:
+    - vars.yaml
+ 
+  gather_facts: False
+  become: true
+  tasks:
+     - name: "Create directory for certs"
+       file:
+         path: "{{ item }}"
+         state: directory
+       with_items:
+         - /etc/kubernetes/pki
+         - /etc/kubernetes/pki/etcd
+        
+
+     - name: "Copy over the CA certificate"
+       copy:
+         src: artifacts/{{ hostvars[groups['etcd'][0]].inventory_hostname}}/pki/{{ item }}
+         remote_src: False
+         dest: /etc/kubernetes/pki/
+         owner: root
+         group: root
+         mode: 600
+       with_items:
+         - apiserver-etcd-client.crt
+         - apiserver-etcd-client.key
+       when: "inventory_hostname == groups['master'][0]"  
+
+     - name: "Copy over the CA certificate"
+       copy:
+         src: artifacts/{{ hostvars[groups['etcd'][0]].inventory_hostname}}/pki/etcd/ca.crt
+         remote_src: False
+         dest: /etc/kubernetes/pki/etcd
+         owner: root
+         group: root
+         mode: 600
+       when: "inventory_hostname == groups['master'][0]"
+    
+     - name: "Creating kubeadmcfg.yaml for master "
+       copy:
+         dest: "/root/kubeadmcfg.yaml"
+         content: |
+           apiVersion: "kubeadm.k8s.io/v1beta3"
+           kind: ClusterConfiguration
+           kubernetesVersion: stable
+           apiServer:
+             certSANs:
+             - "{{ vip_for_haproxy }}"
+           controlPlaneEndpoint: "{{ vip_for_haproxy }}:6443"
+           etcd:
+               external:
+                   endpoints:
+                   - https://{{ hostvars[groups['etcd'][0]].ansible_host }}:2379
+                   - https://{{ hostvars[groups['etcd'][1]].ansible_host }}:2379
+                   - https://{{ hostvars[groups['etcd'][2]].ansible_host }}:2379
+                   - https://{{ hostvars[groups['etcd'][3]].ansible_host }}:2379
+                   - https://{{ hostvars[groups['etcd'][4]].ansible_host }}:2379
+                   caFile: /etc/kubernetes/pki/etcd/ca.crt
+                   certFile: /etc/kubernetes/pki/apiserver-etcd-client.crt
+                   keyFile: /etc/kubernetes/pki/apiserver-etcd-client.key
+       when: "inventory_hostname == groups['master'][0]"
+
+     - name: Create First master node
+       shell: kubeadm init --config /root/kubeadmcfg.yaml
+       register: join_command_raw  
+       delegate_facts: true
+       when: "inventory_hostname == groups['master'][0]"
+
+     - name: set join command
+       set_fact:
+         join_command_1: "{{ join_command_raw.stdout_lines[-2] }}"
+         join_command_2: "{{ join_command_raw.stdout_lines[-1] }}"
+       when: "inventory_hostname == groups['master'][0]"    
+
+     - name: Debug
+       debug:
+         msg: "{{join_command_1}} {{join_command_2}} --control-plane" 
+       when: "inventory_hostname == groups['master'][0]"
+
+     - name: copy cluster artifacts
+       fetch:
+         src: "{{ item }}"
+         dest: "/home/{{ local_admin }}/k8s-cluster/artifacts/cluster/"
+         flat: yes
+         owner: "{{ local_admin }}"
+       with_items:
+         - /etc/kubernetes/pki/ca.crt
+         - /etc/kubernetes/pki/ca.key
+         - /etc/kubernetes/pki/sa.key
+         - /etc/kubernetes/pki/sa.pub
+         - /etc/kubernetes/pki/front-proxy-ca.crt
+         - /etc/kubernetes/pki/front-proxy-ca.key
+         - /etc/kubernetes/pki/apiserver-etcd-client.key
+         - /etc/kubernetes/pki/apiserver-etcd-client.crt
+         - /etc/kubernetes/admin.conf
+       when: "inventory_hostname == groups['master'][0]"
+
+     - name: copy cluster artifacts
+       fetch:
+         src: /etc/kubernetes/pki/etcd/ca.crt
+         dest: "/home/{{ local_admin }}/k8s-cluster/artifacts/cluster/etcd-ca.crt"
+         flat: yes
+         owner: "{{ local_admin }}"
+       when: "inventory_hostname == groups['master'][0]"
+
+
+     - name: "Copy cluster artifacts"
+       copy:
+         src: artifacts/cluster/{{ item }}
+         remote_src: False
+         dest: /etc/kubernetes/pki/
+         owner: root
+         group: root
+         mode: 600
+       with_items:
+         - ca.crt
+         - ca.key
+         - sa.pub
+         - sa.key
+         - apiserver-etcd-client.crt
+         - apiserver-etcd-client.key
+         - front-proxy-ca.crt
+         - front-proxy-ca.key
+       when: "inventory_hostname != groups['master'][0]"
+
+     - name: "Copy cluster artifacts"
+       copy:
+         src: artifacts/cluster/etcd-ca.crt
+         remote_src: False
+         dest: /etc/kubernetes/pki/etcd/ca.crt
+         owner: root
+         group: root
+         mode: 600
+       when: "inventory_hostname != groups['master'][0]"
+
+     - name: "Copy cluster artifacts"
+       copy:
+         src: artifacts/cluster/admin.conf
+         remote_src: False
+         dest: /etc/kubernetes/admin.conf
+         owner: root
+         group: root
+         mode: 600
+       when: "inventory_hostname != groups['master'][0]" 
+
+     - name: Set join command
+       debug:
+         msg: "{{join_command_1}} {{join_command_2}} --control-plane" 
+       when: "inventory_hostname == groups['master'][0]"
+
+
+

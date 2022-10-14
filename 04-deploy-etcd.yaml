@@ -1,0 +1,106 @@
+- hosts: etcd
+  remote_user: kuberadm
+  become: True
+  vars_files:
+    - vars.yaml
+  tasks:
+
+    - name: Install haproxy, heartbeat
+      apt:
+        name: "{{ item }}"
+        state: latest
+        update_cache: yes  
+      loop:
+        - haproxy
+        - heartbeat  
+
+    - name: "Copy haproxy.cfg"
+      copy:
+        src: configs/haproxy.cfg
+        remote_src: False
+        dest: /etc/haproxy/haproxy.cfg
+        owner: root
+        group: root
+        mode: 600
+
+    - name: "Copy authkeys"
+      copy:
+        src: configs/authkeys
+        remote_src: False
+        dest: /etc/ha.d/authkeys
+        owner: root
+        group: root
+        mode: 600
+
+    - name: "Copy haresources"
+      copy:
+        src: configs/haresources
+        remote_src: False
+        dest: /etc/ha.d/haresources
+        owner: root
+        group: root
+        mode: 600    
+
+    - name: "Copy ha.cf"
+      copy:
+        src: "configs/{{ inventory_hostname }}_ha.cf"
+        remote_src: False
+        dest: /etc/ha.d/ha.cf
+        owner: root
+        group: root
+        mode: 600
+
+    - name: "Copy etcd certs"
+      copy:
+        src: "artifacts/{{ inventory_hostname }}/"
+        remote_src: False
+        dest: /etc/kubernetes/
+        owner: root
+        group: root
+        mode: 600 
+
+    - name: "Copy kubeadmcfg.yaml"
+      copy:
+        src: "configs/{{ inventory_hostname }}_kubeadmcfg.yaml"
+        remote_src: False
+        dest: /root/kubeadmcfg.yaml
+        owner: root
+        group: root
+        mode: 600         
+
+    - name: "Copy 20-etcd-service-manager.conf"
+      copy:
+        src: "configs/20-etcd-service-manager.conf"
+        remote_src: False
+        dest: /etc/systemd/system/kubelet.service.d/20-etcd-service-manager.conf
+        owner: root
+        group: root
+        mode: 600 
+
+    - name: Set net.ipv4.ip_nonlocal_bind
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_nonlocal_bind
+        value: '1'
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    - name: Make sure a service unit is running
+      ansible.builtin.systemd:
+        state: started
+        enabled: yes
+        name: "{{ item }}"
+      loop:
+        - haproxy
+        - heartbeat 
+
+    - name: restart kubelet
+      ansible.builtin.systemd:
+        state: restarted
+        daemon_reload: yes
+        name: kubelet     
+
+    - name: Create etcd cluster
+      shell: "kubeadm init phase etcd local --config=/root/kubeadmcfg.yaml"     
+
+

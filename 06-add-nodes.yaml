@@ -1,0 +1,20 @@
+- hosts: kubernetes
+  vars_files:
+    - vars.yaml
+ 
+  gather_facts: False
+  become: true
+  tasks:
+
+    - name: set join another masters
+      shell: |        
+             sudo kubeadm join {{ vip_for_haproxy }}:6443 --token ynbdkf.k6i6zwjc9xwp3bkn \
+             --discovery-token-ca-cert-hash sha256:730d1f9b20e3be290a4d8d0a59b28472630f1c579b4b22025e7b38c58091d190 \
+             --control-plane
+      when: "'master' in group_names and inventory_hostname != groups['master'][0]"
+   
+    - name: set join workers
+      shell: |
+             sudo kubeadm join {{ vip_for_haproxy }}:6443 --token  ynbdkf.k6i6zwjc9xwp3bkn \
+             --discovery-token-ca-cert-hash sha256:730d1f9b20e3be290a4d8d0a59b28472630f1c579b4b22025e7b38c58091d190
+      when: "'worker' in group_names"           
